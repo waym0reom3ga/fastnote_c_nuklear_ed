@@ -47,6 +47,12 @@ static void frame(UIState *ui, struct nk_context *ctx) {
     ui_run_frame(ui, ctx);
 }
 
+static void pump_frame(UIState *ui, struct nk_context *ctx) {
+    nk_clear(ctx);
+    ui_pump_focus(ui, ctx);
+    ui_run_frame(ui, ctx);
+}
+
 /* Inject a real pointer click at (x, y).  nuklear detects clicks across two
  * frames: press down on frame N, release on frame N+1.
  *
@@ -291,6 +297,143 @@ int main(void) {
         tcheck("saveas.tracks-path",
                contains(ui->app.doc.path ? ui->app.doc.path : "", "saved.md"),
                "document path not updated");
+    }
+
+    /* 11. FR-11 accelerators reach the same handlers as the buttons */
+    {
+        ui->pending_accel = ACCEL_OPEN;
+        frame(ui, ctx);
+        tcheck("accel.open", ui->browser_open,
+               "Ctrl+O did not open the browser");
+        click_cancel(ui, ctx);
+
+        ui->pending_accel = ACCEL_SAVE_AS;
+        frame(ui, ctx);
+        tcheck("accel.save-as", ui->browser_open && ui->pending_save,
+               "Ctrl+Shift+S did not open the save browser");
+        click_cancel(ui, ctx);
+
+        ui->pending_accel = ACCEL_EXPORT;
+        frame(ui, ctx);
+        tcheck("accel.export", ui->browser_open && ui->pending_export,
+               "Ctrl+E did not open the export browser");
+        click_cancel(ui, ctx);
+
+        ui->pending_accel = ACCEL_EXPORT_PDF;
+        frame(ui, ctx);
+        tcheck("accel.export-pdf", ui->browser_open && ui->pending_export_pdf,
+               "Ctrl+Shift+E did not open the PDF browser");
+        click_cancel(ui, ctx);
+    }
+
+    /* 12. browser path entry: Ctrl+L focuses it, Enter commits (spec 3.2) */
+    {
+        /* drain any pending editor focus from an earlier open */
+        while (ui->editor_focus_pending || ui->release_pending)
+            pump_frame(ui, ctx);
+        click_toolbar(ui, ctx, on_open);
+        tcheck("browser.path-open", ui->browser_open, "browser not open");
+        ui->pending_accel = ACCEL_FOCUS_PATH;
+        frame(ui, ctx);                  /* apply accel -> path_focus_pending */
+        pump_frame(ui, ctx);             /* press at the path field */
+        pump_frame(ui, ctx);             /* release; the field is now active */
+        snprintf(ui->browser_path, sizeof(ui->browser_path),
+                 "%s/a.md", dir);
+        free(ui->browser.path_input);
+        ui->browser.path_input = strdup(ui->browser_path);
+        nk_clear(ctx);
+        nk_input_begin(ctx);
+        nk_input_key(ctx, NK_KEY_ENTER, 1);
+        ui_run_frame(ui, ctx);
+        nk_input_end(ctx);
+        nk_clear(ctx);
+        nk_input_begin(ctx);
+        nk_input_key(ctx, NK_KEY_ENTER, 0);
+        ui_run_frame(ui, ctx);
+        nk_input_end(ctx);
+        tcheck("browser.enter-commits", !ui->browser_open &&
+                    contains(ui->app.doc.path ? ui->app.doc.path : "", "a.md"),
+               "Enter on the typed path did not commit");
+
+        /* Enter via ACCEL_CONFIRM (the real GLFW path): reliable even when
+         * nuklear's edge-triggered key event is lost. */
+        {
+            while (ui->editor_focus_pending || ui->release_pending)
+                pump_frame(ui, ctx);
+            click_toolbar(ui, ctx, on_open);
+            snprintf(ui->browser_path, sizeof(ui->browser_path), "%s/a.md", dir);
+            free(ui->browser.path_input);
+            ui->browser.path_input = strdup(ui->browser_path);
+            ui->pending_accel = ACCEL_CONFIRM;
+            frame(ui, ctx);
+            tcheck("browser.confirm-commits", !ui->browser_open &&
+                        contains(ui->app.doc.path ? ui->app.doc.path : "", "a.md"),
+                   "ACCEL_CONFIRM did not commit the browser");
+        }
+
+        /* Escape via ACCEL_CANCEL closes the browser without committing. */
+        {
+            click_toolbar(ui, ctx, on_open);
+            tcheck("browser.cancel-escape-pre", ui->browser_open,
+                   "browser did not reopen for cancel test");
+            ui->pending_accel = ACCEL_CANCEL;
+            frame(ui, ctx);
+            tcheck("browser.cancel-escape", !ui->browser_open,
+                   "Escape did not close the browser");
+        }
+    }
+
+    /* 13. editor receives typed text after an open (FR-3, keyboard-first) */
+    {
+        click_toolbar(ui, ctx, on_open);
+        click_entry(ui, ctx, "a.md");    /* sets editor_focus_pending */
+        pump_frame(ui, ctx);             /* press at the editor */
+        pump_frame(ui, ctx);             /* release; the editor is active */
+        nk_clear(ctx);
+        nk_input_begin(ctx);
+        nk_input_unicode(ctx, 'x');
+        ui_run_frame(ui, ctx);
+        nk_input_end(ctx);
+        tcheck("edit.typed",
+               contains(ui->app.doc.text, "x") || contains(ui->editor_text, "x"),
+               "typing did not reach the document");
+        tcheck("edit.marks-dirty", ui->app.doc.dirty,
+               "typed text did not mark the document dirty");
+    }
+
+    /* 14. event-file publication (spec 5.1) */
+    {
+        char ev[512], content[2048];
+        snprintf(ev, sizeof(ev), "%s/events.txt", dir);
+        free(ui->app.event_file);
+        ui->app.event_file = strdup(ev);
+        ui->pending_accel = ACCEL_SAVE;          /* doc has a path -> save */
+        frame(ui, ctx);
+        click_toolbar(ui, ctx, on_export);
+        click_ok(ui, ctx);
+        click_toolbar(ui, ctx, on_export_pdf);
+        click_ok(ui, ctx);
+        read_head(ev, content, sizeof(content));
+        tcheck("event.markers",
+               contains(content, "save") && contains(content, "export-html") &&
+                   contains(content, "export-pdf"),
+               "event file missing completion markers");
+        free(ui->app.event_file);
+        ui->app.event_file = NULL;
+    }
+
+    /* 15. FR-9: closing a dirty document must prompt, never discard */
+    {
+        ui->app.doc.dirty = true;
+        tcheck("close.dirty-blocks", ui_request_close(ui),
+               "dirty close request was not intercepted");
+        tcheck("close.prompt-shown", ui->close_prompt_open,
+               "no unsaved-changes prompt shown");
+        frame(ui, ctx); /* the prompt window draws */
+        ui->close_prompt_open = false;
+        ui->app.doc.dirty = false;
+        tcheck("close.clean-proceeds", !ui_request_close(ui),
+               "clean close request was blocked");
     }
 
     ui_nk_free(ctx);

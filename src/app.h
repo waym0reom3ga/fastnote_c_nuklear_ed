@@ -13,7 +13,7 @@
 #include <stddef.h>
 
 #define APP_EDITOR_NAME "FastNote"
-#define APP_VERSION "1.0.0"
+#define APP_VERSION "1.1.0"
 
 typedef struct {
     char *path;   /* NULL or heap-allocated path */
@@ -24,6 +24,7 @@ typedef struct {
 typedef struct {
     Document doc;
     char *notes_dir; /* heap-allocated absolute path */
+    char *event_file; /* heap-allocated; phase-marker file (spec 5.1), or NULL */
     bool saved_once;
 } AppState;
 
@@ -42,5 +43,9 @@ void     app_state_free(AppState *s);       /* free fields + the struct itself *
 /* err helpers: actions return NULL on success or a static error string. */
 const char *fn_error(void);
 void        fn_set_error(const char *fmt, ...);
+
+/* Append a phase marker to the event file, if one was requested (spec 5.1).
+ * A reporting outlet only — never drives or simulates an operation. */
+void fn_event(AppState *s, const char *marker);
 
 #endif /* FASTNOTE_APP_H */

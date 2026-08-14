@@ -150,7 +150,11 @@ void on_save(UIState *ui) {
         ui_set_status(ui, err ? "save failed" : "Saved");
         return;
     }
-    /* no path yet: save-as through the browser */
+    /* no path yet: save-as through the browser (FR-5 -> FR-6) */
+    on_save_as(ui);
+}
+
+void on_save_as(UIState *ui) {
     if (browser_new(&ui->browser, "save", ui->app.notes_dir) != NULL) {
         ui_set_status(ui, "cannot browse directory");
         return;
@@ -199,6 +203,47 @@ void on_export_pdf(UIState *ui) { ui_prompt_export(ui, true); }
 void on_theme(UIState *ui) {
     ui->theme_dark = !ui->theme_dark;
     ui_set_status(ui, ui->theme_dark ? "Dark theme" : "Light theme");
+}
+
+/* ---- FR-9: never silently discard a dirty document ---------------------- */
+
+bool ui_request_close(UIState *ui) {
+    if (ui->app.doc.dirty && !ui->closing) {
+        ui->close_prompt_open = true;
+        return true; /* blocked: the prompt window decides */
+    }
+    return false; /* proceed with the close */
+}
+
+static void prompt_cancel(UIState *ui) { ui->close_prompt_open = false; }
+
+static void prompt_discard(UIState *ui) {
+    ui->closing = true;
+    ui->close_prompt_open = false;
+}
+
+static void prompt_save(UIState *ui) {
+    if (ui->app.doc.path)
+        actionSave(&ui->app);
+    ui->closing = true;
+    ui->close_prompt_open = false;
+}
+
+static void ui_prompt_frame(UIState *ui, struct nk_context *ctx) {
+    if (!ui->close_prompt_open)
+        return;
+    nk_begin(ctx, "Unsaved changes", nk_rect(320, 250, 420, 140),
+             NK_WINDOW_TITLE | NK_WINDOW_BORDER | NK_WINDOW_MOVABLE);
+    nk_layout_row_dynamic(ctx, 26, 1);
+    nk_label(ctx, "The document has unsaved changes.", NK_TEXT_LEFT);
+    nk_layout_row_static(ctx, 30, 100, 3);
+    if (nk_button_label(ctx, "Cancel"))
+        prompt_cancel(ui);
+    if (nk_button_label(ctx, "Discard"))
+        prompt_discard(ui);
+    if (nk_button_label(ctx, "Save"))
+        prompt_save(ui);
+    nk_end(ctx);
 }
 
 static const char *toolbar_label(const UIControl *c, bool dark) {
@@ -262,8 +307,22 @@ static void ui_commit_path(UIState *ui, const char *path) {
             snprintf(ui->editor_text, ui->editor_cap, "%s",
                      ui->app.doc.text);
             ui_set_status(ui, "Opened");
+            /* typing lands in the editor after an open (FR-3) */
+            ui->editor_focus_pending = true;
         }
     }
+}
+
+/* Confirm the browser's current selection / typed path and close it.  Shared
+ * by the OK button, Enter (ACCEL_CONFIRM) and the path field's Enter signal. */
+static void ui_browser_commit(UIState *ui) {
+    char *res = browser_result(&ui->browser);
+    if (res && *res)
+        ui_commit_path(ui, res);
+    free(res);
+    ui->browser_open = false;
+    ui->pending_save = false;
+    ui->pending_export = false;
 }
 
 /* ------------------------------------------------------------ frame */
@@ -286,7 +345,83 @@ static UIRect ui_rect_of(UIRect r, struct nk_context *ctx) {
     return r;
 }
 
+/* Apply an accelerator set since the last frame (FR-11).  The toolbar
+ * handlers are invoked — the same code a button click invokes (spec 5.2). */
+static void ui_apply_accel(UIState *ui) {
+    switch (ui->pending_accel) {
+    case ACCEL_OPEN:       on_open(ui); break;
+    case ACCEL_SAVE:       on_save(ui); break;
+    case ACCEL_SAVE_AS:    on_save_as(ui); break;
+    case ACCEL_EXPORT:     on_export(ui); break;
+    case ACCEL_EXPORT_PDF: on_export_pdf(ui); break;
+    case ACCEL_FOCUS_PATH:
+        /* Ctrl+L: ready the path field for a fresh path (spec 3.2).  The
+         * field is cleared so the typed path is used verbatim; nuklear has
+         * no per-widget key routing, so a select-all here could be consumed
+         * by the still-active editor instead. */
+        ui->browser_path[0] = '\0';
+        free(ui->browser.path_input);
+        ui->browser.path_input = strdup("");
+        ui->path_focus_pending = true;
+        break;
+    case ACCEL_CONFIRM:
+        if (ui->browser_open)
+            ui_browser_commit(ui);
+        break;
+    case ACCEL_CANCEL:
+        if (ui->browser_open) {
+            ui->browser_open = false;
+            ui->pending_save = false;
+            ui->pending_export = false;
+        }
+        break;
+    }
+    ui->pending_accel = ACCEL_NONE;
+}
+
+/* Deliver keyboard focus to the editor or the browser path field the way a
+ * user would: a real pointer press at the widget, held for one frame and
+ * released the next.  Called by the GLFW loop and the test driver BEFORE
+ * ui_run_frame, so it never clobbers a click the caller already injected. */
+void ui_pump_focus(UIState *ui, struct nk_context *ctx) {
+    if (ui->release_pending) {
+        nk_input_button(ctx, NK_BUTTON_LEFT, ui->release_x, ui->release_y, 0);
+        ui->release_pending = false;
+        return;
+    }
+    if (ctx->input.mouse.buttons[NK_BUTTON_LEFT].down)
+        return; /* a real click is in flight; wait */
+    UIRect *r = NULL;
+    if (ui->editor_focus_pending && ui->editor_rect.w > 0) {
+        r = &ui->editor_rect;
+        ui->editor_focus_pending = false;
+    } else if (ui->path_focus_pending && ui->path_rect.w > 0) {
+        r = &ui->path_rect;
+        ui->path_focus_pending = false;
+    }
+    if (!r)
+        return;
+    ui->release_x = r->x + 8;
+    ui->release_y = r->y + 8;
+    nk_input_motion(ctx, ui->release_x, ui->release_y);
+    nk_input_button(ctx, NK_BUTTON_LEFT, ui->release_x, ui->release_y, 1);
+    ui->release_pending = true;
+}
+
+static UIRect ui_record_rect(struct nk_context *ctx) {
+    struct nk_rect b = nk_widget_bounds(ctx);
+    UIRect r;
+    r.x = (int)b.x;
+    r.y = (int)b.y;
+    r.w = (int)b.w;
+    r.h = (int)b.h;
+    return r;
+}
+
 void ui_run_frame(UIState *ui, struct nk_context *ctx) {
+    bool browser_was_open = ui->browser_open;
+    ui_apply_accel(ui);
+
     if (nk_begin(ctx, "FastNote", nk_rect(0, 0, (float)ui->width,
                                           (float)ui->height), 0)) {
         /* toolbar: static row so all six buttons fit in one row (a dynamic
@@ -313,25 +448,36 @@ void ui_run_frame(UIState *ui, struct nk_context *ctx) {
         nk_label(ctx, "Editor / Preview", NK_TEXT_LEFT);
         nk_layout_row_dynamic(ctx, (float)(ui->height - 40 - 22 - 24), 2);
         {
-            /* The edit widget writes into editor_text; the doc is the model.
-             * If the user typed this frame, the doc follows the editor.
-             * Otherwise a toolbar handler may have changed the doc, so the
-             * editor follows the doc — otherwise handler edits are wiped. */
-            char *ed_before = strdup(ui->editor_text);
-            int len = (int)strlen(ui->editor_text);
-            nk_edit_string(ctx, NK_EDIT_BOX | NK_EDIT_SIG_ENTER,
-                           ui->editor_text, &len, (int)ui->editor_cap,
-                           nk_filter_default);
-            ui->editor_text[len] = '\0';
-            if (strcmp(ed_before, ui->editor_text) != 0) {
-                doc_set_text(&ui->app.doc, ui->editor_text);
-                ui_rebuild_preview(ui);
-            } else if (strcmp(ui->editor_text, ui->app.doc.text) != 0) {
-                snprintf(ui->editor_text, ui->editor_cap, "%s",
-                         ui->app.doc.text);
-                ui_rebuild_preview(ui);
+            /* While the browser is open it owns the keyboard: the editor is
+             * shown read-only, so a confirm Enter cannot also type into the
+             * document.  browser_was_open is captured before the accelerator
+             * is applied, so a commit that closes the browser still leaves
+             * the editor locked for this frame. */
+            if (browser_was_open) {
+                nk_label_wrap(ctx, ui->editor_text);
+            } else {
+                /* The edit widget writes into editor_text; the doc is the
+                 * model. If the user typed this frame, the doc follows the
+                 * editor. Otherwise a toolbar handler may have changed the
+                 * doc, so the editor follows the doc — otherwise handler
+                 * edits are wiped. */
+                ui->editor_rect = ui_record_rect(ctx);
+                char *ed_before = strdup(ui->editor_text);
+                int len = (int)strlen(ui->editor_text);
+                nk_edit_string(ctx, NK_EDIT_BOX,
+                               ui->editor_text, &len, (int)ui->editor_cap,
+                               nk_filter_default);
+                ui->editor_text[len] = '\0';
+                if (strcmp(ed_before, ui->editor_text) != 0) {
+                    doc_set_text(&ui->app.doc, ui->editor_text);
+                    ui_rebuild_preview(ui);
+                } else if (strcmp(ui->editor_text, ui->app.doc.text) != 0) {
+                    snprintf(ui->editor_text, ui->editor_cap, "%s",
+                             ui->app.doc.text);
+                    ui_rebuild_preview(ui);
+                }
+                free(ed_before);
             }
-            free(ed_before);
         }
         nk_label_wrap(ctx, ui->preview_text);
 
@@ -378,27 +524,24 @@ void ui_run_frame(UIState *ui, struct nk_context *ctx) {
         }
         nk_layout_row_dynamic(ctx, 24, 1);
         {
+            ui->path_rect = ui_record_rect(ctx);
             int len = (int)strlen(ui->browser_path);
-            nk_edit_string(ctx, NK_EDIT_SIMPLE, ui->browser_path, &len,
-                           (int)sizeof(ui->browser_path) - 1,
-                           nk_filter_default);
+            nk_flags pres = nk_edit_string(
+                ctx, NK_EDIT_SIMPLE | NK_EDIT_SIG_ENTER, ui->browser_path,
+                &len, (int)sizeof(ui->browser_path) - 1, nk_filter_default);
             ui->browser_path[len] = '\0';
             free(ui->browser.path_input);
             ui->browser.path_input = strdup(ui->browser_path);
+            /* Enter confirms the typed path (spec 3.2), same as OK. */
+            if (pres & NK_EDIT_COMMITTED)
+                ui_browser_commit(ui);
         }
         nk_layout_row_static(ctx, 26,
                              (int)((ctx->current->layout->clip.w - 4.0f) / 2),
                              2);
         ui->ok_rect = ui_rect_of(ui->ok_rect, ctx);
-        if (nk_button_label(ctx, "OK")) {
-            char *res = browser_result(&ui->browser);
-            if (res && *res)
-                ui_commit_path(ui, res);
-            free(res);
-            ui->browser_open = false;
-            ui->pending_save = false;
-            ui->pending_export = false;
-        }
+        if (nk_button_label(ctx, "OK"))
+            ui_browser_commit(ui);
         ui->cancel_rect = ui_rect_of(ui->cancel_rect, ctx);
         if (nk_button_label(ctx, "Cancel")) {
             ui->browser_open = false;
@@ -407,4 +550,6 @@ void ui_run_frame(UIState *ui, struct nk_context *ctx) {
         }
         nk_end(ctx);
     }
+
+    ui_prompt_frame(ui, ctx);
 }

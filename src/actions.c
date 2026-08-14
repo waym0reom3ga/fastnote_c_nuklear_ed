@@ -30,10 +30,12 @@ char *actionOpen(AppState *s, const char *path) {
     char *err = doc_open(&s->doc, path);
     if (err)
         fn_set_error("cannot open %s: %s", path, strip_err(err));
+    else
+        fn_event(s, "open");
     return err;
 }
 
-/* actionInsert: append text at the document end (FR-3; --insert seam). */
+/* actionInsert: append text at the document end (FR-3). */
 void actionInsert(AppState *s, const char *text) {
     doc_insert_text(&s->doc, text);
 }
@@ -41,16 +43,20 @@ void actionInsert(AppState *s, const char *text) {
 /* actionSave: write the document (FR-5).  NULL on success. */
 char *actionSave(AppState *s) {
     char *err = doc_save(&s->doc);
-    if (!err)
+    if (!err) {
         s->saved_once = true;
+        fn_event(s, "save");
+    }
     return err;
 }
 
 /* actionSaveAs: save under a new path (FR-6).  NULL on success. */
 char *actionSaveAs(AppState *s, const char *path) {
     char *err = doc_save_as(&s->doc, path);
-    if (!err)
+    if (!err) {
         s->saved_once = true;
+        fn_event(s, "save-as");
+    }
     return err;
 }
 
@@ -65,6 +71,8 @@ char *actionExportHTML(AppState *s, const char *path, const char *theme) {
     free(css);
     if (err)
         fn_set_error("%s", err);
+    else
+        fn_event(s, "export-html");
     return err;
 }
 
@@ -72,5 +80,7 @@ char *actionExportPDF(AppState *s, const char *path) {
     char *err = write_pdf_export(s->doc.text, path);
     if (err)
         fn_set_error("%s", err);
+    else
+        fn_event(s, "export-pdf");
     return err;
 }

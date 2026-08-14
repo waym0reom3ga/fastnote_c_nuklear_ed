@@ -168,7 +168,9 @@ unsigned char *pdf_from_lines(const char *text, int font_pt, size_t *out_len) {
     }
     {
         char th[256];
-        snprintf(th, sizeof(th), "trailer\n<< /Size %zu /Root 1 0 R >>\nstartxref\n%zu\n%%EOF\n",
+        /* "%%%%EOF" prints the literal PDF end-of-file marker "%%EOF". */
+        snprintf(th, sizeof(th),
+                 "trailer\n<< /Size %zu /Root 1 0 R >>\nstartxref\n%zu\n%%%%EOF\n",
                  font_obj + 1, xref_pos);
         pb_add(&out, th);
     }

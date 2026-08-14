@@ -18,6 +18,18 @@ void fn_set_error(const char *fmt, ...) {
     va_end(ap);
 }
 
+/* Phase-completion publication (spec 5.1): append one line to the event file
+ * after a user-visible phase has actually finished. */
+void fn_event(AppState *s, const char *marker) {
+    if (!s || !s->event_file || !marker)
+        return;
+    FILE *f = fopen(s->event_file, "a");
+    if (f) {
+        fprintf(f, "%s\n", marker);
+        fclose(f);
+    }
+}
+
 char *strdup(const char *s) {
     char *p = malloc(strlen(s) + 1);
     if (p)
@@ -147,6 +159,7 @@ void app_state_free_fields(AppState *s) {
         return;
     doc_free(&s->doc);
     free(s->notes_dir);
+    free(s->event_file);
 }
 
 void app_state_free(AppState *s) {

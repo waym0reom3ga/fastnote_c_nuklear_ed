@@ -20,6 +20,19 @@ void ui_nk_free(struct nk_context *ctx);
 
 #define UI_CONTROL_ID_MAX 24
 
+/* FR-11 accelerators, as delivered to ui_run_frame via pending_accel. */
+enum {
+    ACCEL_NONE = 0,
+    ACCEL_OPEN,        /* Ctrl+O */
+    ACCEL_SAVE,        /* Ctrl+S */
+    ACCEL_SAVE_AS,     /* Ctrl+Shift+S */
+    ACCEL_EXPORT,      /* Ctrl+E */
+    ACCEL_EXPORT_PDF,  /* Ctrl+Shift+E */
+    ACCEL_FOCUS_PATH,  /* Ctrl+L */
+    ACCEL_CONFIRM,     /* Enter in the browser (spec 3.2) */
+    ACCEL_CANCEL,      /* Escape in the browser (spec 3.2) */
+};
+
 /* Forward-declare so UIControl can reference it */
 typedef struct UIState UIState;
 
@@ -56,6 +69,21 @@ typedef struct UIState {
     UIEntryRect *entry_rects;
     int n_entry_rects;
     UIRect ok_rect, cancel_rect;
+
+    /* Keyboard-first input: one accelerator applied at the start of the next
+     * frame; focus requests activate the editor / browser path field with a
+     * real pointer press so typing lands (spec FR-11, 3.2). */
+    int pending_accel;
+    bool editor_focus_pending;
+    bool path_focus_pending;
+    bool release_pending;   /* pointer-up for the injected focus press */
+    int release_x, release_y;
+    UIRect editor_rect;     /* last-frame bounds of the edit widget */
+    UIRect path_rect;       /* last-frame bounds of the browser path field */
+
+    /* FR-9 close handling. */
+    bool close_prompt_open;
+    bool closing;           /* user confirmed save/discard; allow the close */
 } UIState;
 
 UIState *ui_state_new(const char *notes_dir);
@@ -67,10 +95,19 @@ void ui_rebuild_preview(UIState *ui);
  * last frame.  headless-safe (no GLFW, no GL). */
 void ui_run_frame(UIState *ui, struct nk_context *ctx);
 
+/* Call once per frame BEFORE ui_run_frame: activates the editor / browser
+ * path field with a real pointer press when a focus request is pending. */
+void ui_pump_focus(UIState *ui, struct nk_context *ctx);
+
+/* FR-9: intercept a window close request.  Returns true when the close was
+ * blocked (dirty document -> the prompt window is shown instead). */
+bool ui_request_close(UIState *ui);
+
 /* The click handlers, named on_* so the acceptance harness can see the
  * binding (A6/A11). */
 void on_open(UIState *ui);
 void on_save(UIState *ui);
+void on_save_as(UIState *ui);
 void on_insert(UIState *ui);
 void on_export(UIState *ui);
 void on_export_pdf(UIState *ui);
