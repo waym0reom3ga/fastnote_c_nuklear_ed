@@ -1,0 +1,5 @@
+build/
+fastnote_c_nuklear
+test_ui_bin
+test_asan_bin
+*.o

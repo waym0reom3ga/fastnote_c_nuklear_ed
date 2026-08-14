@@ -11,13 +11,13 @@
 
 static char *build_save_path(const char *path, const char *ext) {
     size_t n = strlen(path);
-    if (n >= 4 && strcmp(path + n - 4, ext) == 0)
+    size_t elen = strlen(ext);
+    if (n >= elen && strcmp(path + n - elen, ext) == 0)
         return strdup(path);
-    size_t len = n + 4 + 1;
-    char *out = malloc(len);
+    char *out = malloc(n + elen + 1);
     if (!out)
         return NULL;
-    snprintf(out, len, "%s%s", path, ext);
+    snprintf(out, n + elen + 1, "%s%s", path, ext);
     return out;
 }
 

@@ -38,7 +38,7 @@ static void sb_add(SB *b, const char *s) { sb_addn(b, s, strlen(s)); }
 static char *itoa_c(int n) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", n);
-    return xstrdup(buf);
+    return strdup(buf);
 }
 
 /* forward declarations for block helpers */
@@ -73,7 +73,7 @@ static void sv_push(StrVec *v, const char *s) {
         v->cap = v->cap ? v->cap * 2 : 8;
         v->rows = realloc(v->rows, v->cap * sizeof(char *));
     }
-    v->rows[v->n++] = xstrdup(s);
+    v->rows[v->n++] = strdup(s);
 }
 
 static void sv_clear(StrVec *v) {
@@ -88,7 +88,8 @@ static void split_cells(const char *line, StrVec *cells) {
     const char *s = line;
     while (*s == ' ')
         s++;
-    char *tmp = xstrdup(s);
+    if (*s == '|') s++; /* skip leading pipe */
+    char *tmp = strdup(s);
     size_t len = strlen(tmp);
     if (len && tmp[len - 1] == '|')
         tmp[len - 1] = '\0';
@@ -97,13 +98,16 @@ static void split_cells(const char *line, StrVec *cells) {
         char *start = p;
         while (*p && *p != '|')
             p++;
-        char *cell = xstrndup(start, (size_t)(p - start));
-        while (*cell == ' ')
-            memmove(cell, cell + 1, strlen(cell));
-        size_t cl = strlen(cell);
-        while (cl && cell[cl - 1] == ' ')
-            cell[--cl] = '\0';
-        sv_push(cells, cell);
+        char *cell = strndup(start, (size_t)(p - start));
+        /* left-trim */
+        const char *cptr = cell;
+        while (*cptr == ' ') cptr++;
+        size_t len_cell = strlen(cptr);
+        /* right-trim: find last non-space */
+        while (len_cell && cptr[len_cell - 1] == ' ')
+            len_cell--;
+        char *trimmed = strndup(cptr, len_cell);
+        sv_push(cells, trimmed);
         free(cell);
         if (*p == '|')
             p++;
@@ -269,7 +273,7 @@ static int find_inline(const char *s, size_t from, InlineMatch *m) {
 }
 
 static void resolve_wiki(const char *target, const char *base_dir, SB *out) {
-    char *base = xstrdup(target);
+    char *base = strdup(target);
     size_t bl = strlen(base);
     if (bl > 3 && (strcasecmp(base + bl - 3, ".md") == 0 ||
                    strcasecmp(base + bl - 3, ".txt") == 0))
@@ -332,7 +336,7 @@ static char *render_inline(const char *text, const char *base_dir) {
             sb_add_esc(&out, text + m.g[3][0] + 1, (size_t)(m.g[3][1] - m.g[3][0] - 2));
             sb_add(&out, "\\)</span>");
         } else if (m.g[4][0] >= 0 && m.g[4][0] == best) {
-            char *target = xstrndup(text + m.g[5][0], (size_t)(m.g[5][1] - m.g[5][0]));
+            char *target = strndup(text + m.g[5][0], (size_t)(m.g[5][1] - m.g[5][0]));
             sb_add(&out, "<a class=\"wiki\" href=\"");
             resolve_wiki(target, base_dir, &out);
             sb_add(&out, "\">");
@@ -359,7 +363,7 @@ static char *render_inline(const char *text, const char *base_dir) {
                 sb_add(&out, "\">");
             }
         } else if (m.g[12][0] >= 0 && m.g[12][0] == best) {
-            char *inner = xstrndup(text + m.g[13][0], (size_t)(m.g[13][1] - m.g[13][0]));
+            char *inner = strndup(text + m.g[13][0], (size_t)(m.g[13][1] - m.g[13][0]));
             char *rendered = render_inline(inner, base_dir);
             free(inner);
             sb_add(&out, "<strong>");
@@ -371,7 +375,7 @@ static char *render_inline(const char *text, const char *base_dir) {
             sb_add_esc(&out, text + m.g[15][0], (size_t)(m.g[15][1] - m.g[15][0]));
             sb_add(&out, "</del>");
         } else if (m.g[16][0] >= 0 && m.g[16][0] == best) {
-            char *inner = xstrndup(text + m.g[17][0], (size_t)(m.g[17][1] - m.g[17][0]));
+            char *inner = strndup(text + m.g[17][0], (size_t)(m.g[17][1] - m.g[17][0]));
             char *rendered = render_inline(inner, base_dir);
             free(inner);
             sb_add(&out, "<em>");
@@ -379,7 +383,7 @@ static char *render_inline(const char *text, const char *base_dir) {
             sb_add(&out, "</em>");
             free(rendered);
         } else if (m.g[18][0] >= 0 && m.g[18][0] == best) {
-            char *inner = xstrndup(text + m.g[19][0], (size_t)(m.g[19][1] - m.g[19][0]));
+            char *inner = strndup(text + m.g[19][0], (size_t)(m.g[19][1] - m.g[19][0]));
             char *rendered = render_inline(inner, base_dir);
             free(inner);
             sb_add(&out, "<em>");
@@ -389,7 +393,7 @@ static char *render_inline(const char *text, const char *base_dir) {
         }
         pos = (size_t)best_end;
     }
-    return out.data ? out.data : xstrdup("");
+    return out.data ? out.data : strdup("");
 }
 
 /* ------------------------------------------------------------ slug */
@@ -418,18 +422,18 @@ char *render_fragment(const char *text, const char *base_dir) {
     /* split lines */
     size_t nlines = 0;
     const char *p = text, *e;
-    const char **lines = NULL;
+    char **lines = NULL;
     while (*p) {
         e = strchr(p, '\n');
         if (!e)
             e = p + strlen(p);
         lines = realloc(lines, (nlines + 1) * sizeof(char *));
-        lines[nlines++] = xstrndup(p, (size_t)(e - p));
+        lines[nlines++] = strndup(p, (size_t)(e - p));
         p = *e ? e + 1 : e;
     }
     if (!nlines) {
         lines = realloc(lines, sizeof(char *));
-        lines[nlines++] = xstrdup("");
+        lines[nlines++] = strdup("");
     }
 
     SB out; sb_init(&out);
@@ -527,7 +531,7 @@ char *render_fragment(const char *text, const char *base_dir) {
                 char *hlevel = itoa_c((int)level);
                 headings = realloc(headings, (nh + 1) * sizeof(Heading));
                 headings[nh].level = hlevel;
-                headings[nh].title = xstrdup(title);
+                headings[nh].title = strdup(title);
                 nh++;
                 sb_add(&out, "<h");
                 sb_add(&out, hlevel);
@@ -563,7 +567,7 @@ char *render_fragment(const char *text, const char *base_dir) {
             sv_push(&quote_buf, q);
             continue;
         }
-        if (in_quote) {
+        if (in_quote && stripped[0] != '\0') {
             sv_push(&quote_buf, stripped);
             continue;
         }
@@ -743,7 +747,7 @@ char *render_fragment(const char *text, const char *base_dir) {
     for (size_t k = 0; k < nlines; k++)
         free(lines[k]);
     free(lines);
-    return out.data ? out.data : xstrdup("");
+    return out.data ? out.data : strdup("");
 }
 
 /* ------------------------------------------------------------ plain */
@@ -751,18 +755,18 @@ char *render_fragment(const char *text, const char *base_dir) {
 char *render_plain(const char *text) {
     size_t nlines = 0;
     const char *p = text, *e;
-    const char **lines = NULL;
+    char **lines = NULL;
     while (*p) {
         e = strchr(p, '\n');
         if (!e)
             e = p + strlen(p);
         lines = realloc(lines, (nlines + 1) * sizeof(char *));
-        lines[nlines++] = xstrndup(p, (size_t)(e - p));
+        lines[nlines++] = strndup(p, (size_t)(e - p));
         p = *e ? e + 1 : e;
     }
     if (!nlines) {
         lines = realloc(lines, sizeof(char *));
-        lines[nlines++] = xstrdup("");
+        lines[nlines++] = strdup("");
     }
     const char *RULES_TOP = "\n════════════════════════════════════════════════════════════";
     const char *RULES_BOT = "════════════════════════════════════════════════════════════";
@@ -793,7 +797,7 @@ char *render_plain(const char *text) {
             char *t = s + level;
             while (*t == ' ')
                 t++;
-            char *up = xstrdup(t);
+            char *up = strdup(t);
             for (char *q = up; *q; q++)
                 *q = (char)toupper((unsigned char)*q);
             if (level == 1) {
@@ -860,7 +864,7 @@ char *render_plain(const char *text) {
             continue;
         }
         if (*s) {
-            char *plain = xstrdup(s);
+            char *plain = strdup(s);
             /* strip markup */
             char *dst = plain;
             for (char *q = plain; *q;) {
@@ -892,7 +896,7 @@ char *render_plain(const char *text) {
     for (size_t k = 0; k < nlines; k++)
         free(lines[k]);
     free(lines);
-    return out.data ? out.data : xstrdup("");
+    return out.data ? out.data : strdup("");
 }
 
 /* ------------------------------------------------------------ themes */
@@ -910,7 +914,7 @@ static void build_style(SB *out, const char *theme, const char *custom_css) {
     const Theme *t = &FACE_THEMES[0];
     if (theme && strcmp(theme, "dark") == 0)
         t = &FACE_THEMES[1];
-    char buf[512];
+    char buf[1024];
     snprintf(buf, sizeof(buf),
              "body { background: %s; color: %s;\n"
              "       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;\n"
@@ -944,17 +948,19 @@ static void build_style(SB *out, const char *theme, const char *custom_css) {
 }
 
 char *render_sanitize_css(const char *css) {
+    if (!css || !*css)
+        return strdup("");
     size_t n = strlen(css);
     if (n > 8192)
         n = 8192;
-    char *lower = xstrndup(css, n);
+    char *lower = strndup(css, n);
     for (size_t i = 0; i < n; i++)
         lower[i] = (char)tolower((unsigned char)lower[i]);
     bool bad = strstr(lower, "url(") || strstr(lower, "expression") ||
                strchr(lower, '<') || strchr(lower, '>');
     free(lower);
     if (bad)
-        return xstrdup("");
+        return strdup("");
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)css[i];
         bool ok = isalnum(c) || c == ' ' || c == '#' || c == '%' || c == '.' ||
@@ -962,9 +968,9 @@ char *render_sanitize_css(const char *css) {
                   c == '/' || c == '(' || c == ')' || c == '*' || c == '"' ||
                   c == '\'' || c == '[' || c == ']' || c == '{' || c == '}';
         if (!ok)
-            return xstrdup("");
+            return strdup("");
     }
-    return xstrndup(css, n);
+    return strndup(css, n);
 }
 
 char *render_page(const char *text, const char *title, const char *theme,
@@ -980,7 +986,7 @@ char *render_page(const char *text, const char *title, const char *theme,
     sb_add(&out, body);
     free(body);
     sb_add(&out, "\n</body>\n</html>\n");
-    return out.data ? out.data : xstrdup("");
+    return out.data ? out.data : strdup("");
 }
 
 char *render_doc_title(const char *text) {
@@ -992,10 +998,12 @@ char *render_doc_title(const char *text) {
         while (*end && *end != '\n')
             end++;
         SB out; sb_init(&out);
-        eb_add_esc(&out, start);
+        char *line = strndup(start, (size_t)(end - start));
+        eb_add_esc(&out, line);
+        free(line);
         while (out.len && out.data[out.len - 1] == ' ')
             out.data[--out.len] = '\0';
-        return out.data ? out.data : xstrdup("FastNote");
+        return out.data ? out.data : strdup("FastNote");
     }
     const char *p = strstr(text, "\n# ");
     if (p) {
@@ -1006,12 +1014,14 @@ char *render_doc_title(const char *text) {
         while (*end && *end != '\n')
             end++;
         SB out; sb_init(&out);
-        eb_add_esc(&out, start);
+        char *line = strndup(start, (size_t)(end - start));
+        eb_add_esc(&out, line);
+        free(line);
         while (out.len && out.data[out.len - 1] == ' ')
             out.data[--out.len] = '\0';
-        return out.data ? out.data : xstrdup("FastNote");
+        return out.data ? out.data : strdup("FastNote");
     }
-    return xstrdup("FastNote");
+    return strdup("FastNote");
 }
 
 double render_measure_large_document(void) {

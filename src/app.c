@@ -18,14 +18,14 @@ void fn_set_error(const char *fmt, ...) {
     va_end(ap);
 }
 
-char *xstrdup(const char *s) {
+char *strdup(const char *s) {
     char *p = malloc(strlen(s) + 1);
     if (p)
         strcpy(p, s);
     return p;
 }
 
-char *xstrndup(const char *s, size_t n) {
+char *strndup(const char *s, size_t n) {
     char *p = malloc(n + 1);
     if (!p)
         return NULL;
@@ -71,7 +71,7 @@ char *doc_open(Document *d, const char *path) {
     free(d->text);
     free(d->path);
     d->text = text;
-    d->path = xstrdup(path);
+    d->path = strdup(path);
     d->dirty = false;
     return NULL;
 }
@@ -79,7 +79,7 @@ char *doc_open(Document *d, const char *path) {
 void doc_set_text(Document *d, const char *text) {
     if (strcmp(d->text, text) != 0) {
         free(d->text);
-        d->text = xstrdup(text);
+        d->text = strdup(text);
         d->dirty = true;
     }
 }
@@ -116,7 +116,7 @@ char *doc_save_as(Document *d, const char *path) {
         return errbuf;
     }
     free(d->path);
-    d->path = xstrdup(path);
+    d->path = strdup(path);
     d->dirty = false;
     return NULL;
 }
@@ -132,20 +132,24 @@ AppState *app_state_new(const char *notes_dir) {
     AppState *s = calloc(1, sizeof(AppState));
     if (!s)
         return NULL;
-    s->doc.text = xstrdup("");
+    s->doc.text = strdup("");
     if (notes_dir && *notes_dir) {
-        s->notes_dir = xstrdup(notes_dir);
+        s->notes_dir = strdup(notes_dir);
     } else {
         const char *home = getenv("HOME");
-        s->notes_dir = xstrdup(home && *home ? home : "/tmp");
+        s->notes_dir = strdup(home && *home ? home : "/tmp");
     }
     return s;
 }
 
-void app_state_free(AppState *s) {
+void app_state_free_fields(AppState *s) {
     if (!s)
         return;
     doc_free(&s->doc);
     free(s->notes_dir);
+}
+
+void app_state_free(AppState *s) {
+    app_state_free_fields(s);
     free(s);
 }

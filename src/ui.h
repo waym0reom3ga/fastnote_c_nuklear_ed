@@ -1,10 +1,5 @@
 /* FastNote c_nuklear — UI state shared by the GUI (app_ui.c) and the
  * headless pointer-event tests (test_ui.c).
- *
- * The whole interface is drawn by ui_run_frame() with Nuklear, whose input
- * state is fed by real pointer events.  The GUI (nk_glfw3 + GLFW) and the
- * tests (bare nk_context, no window) both drive the very same frame
- * function, so a click that works headless works in the window.
  */
 
 #ifndef FASTNOTE_UI_H
@@ -12,15 +7,30 @@
 
 #include <stdbool.h>
 
+/* Forward declaration for nuklear context (header not included here) */
+struct nk_context;
+
+/* Headless context helpers (used by test_ui.c) — the GLFW GUI uses
+ * nk_glfw3_init() via the nuklear demo helper header instead. */
+struct nk_context *ui_nk_new(void);
+void ui_nk_free(struct nk_context *ctx);
+
 #include "app.h"
 #include "file_browser.h"
 
 #define UI_CONTROL_ID_MAX 24
 
+/* Forward-declare so UIControl can reference it */
+typedef struct UIState UIState;
+
 typedef struct {
-    void (*handler)(struct UIState *ui);
+    void (*handler)(UIState *ui);
     int x, y, w, h; /* last-frame bounds, as computed by nuklear */
 } UIControl;
+
+typedef struct {
+    int x, y, w, h;
+} UIRect;
 
 typedef struct {
     char *name; /* borrowed from FileBrowser.entries */
@@ -45,6 +55,7 @@ typedef struct UIState {
     int n_toolbar;
     UIEntryRect *entry_rects;
     int n_entry_rects;
+    UIRect ok_rect, cancel_rect;
 } UIState;
 
 UIState *ui_state_new(const char *notes_dir);
@@ -62,6 +73,7 @@ void on_open(UIState *ui);
 void on_save(UIState *ui);
 void on_insert(UIState *ui);
 void on_export(UIState *ui);
+void on_export_pdf(UIState *ui);
 void on_theme(UIState *ui);
 
 #endif /* FASTNOTE_UI_H */

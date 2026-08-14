@@ -74,30 +74,3 @@ char *actionExportPDF(AppState *s, const char *path) {
         fn_set_error("%s", err);
     return err;
 }
-
-/* RunCLIActions executes the headless seam in the mandated order (spec 5.1):
- * --open, --insert, --save, --export.  NULL on success. */
-char *RunCLIActions(AppState *s, const char *open_path, const char *insert,
-                    bool do_save, const char *export_path) {
-    char *err;
-    if (open_path && *open_path) {
-        if ((err = actionOpen(s, open_path)))
-            return err;
-    }
-    if (insert && *insert)
-        actionInsert(s, insert);
-    if (do_save) {
-        if ((err = actionSave(s)))
-            return err;
-    }
-    if (export_path && *export_path) {
-        size_t n = strlen(export_path);
-        if (n >= 4 && strcasecmp(export_path + n - 4, ".pdf") == 0)
-            err = actionExportPDF(s, export_path);
-        else
-            err = actionExportHTML(s, export_path, "light");
-        if (err)
-            return err;
-    }
-    return NULL;
-}

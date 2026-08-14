@@ -36,7 +36,8 @@ char *doc_save_as(Document *d, const char *path);
 void     doc_free(Document *d);
 
 AppState *app_state_new(const char *notes_dir);
-void     app_state_free(AppState *s);
+void     app_state_free_fields(AppState *s); /* free embedded fields only */
+void     app_state_free(AppState *s);       /* free fields + the struct itself */
 
 /* err helpers: actions return NULL on success or a static error string. */
 const char *fn_error(void);

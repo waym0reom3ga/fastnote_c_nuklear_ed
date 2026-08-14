@@ -33,11 +33,19 @@ static bool is_file(const char *path) {
 }
 
 char *browser_new(FileBrowser *b, const char *mode, const char *start_dir) {
+    /* Free any allocations from a previous open */
+    for (size_t i = 0; i < b->n_entries; i++)
+        free(b->entries[i].name);
+    free(b->entries);
+    free(b->mode);
+    free(b->cwd);
+    free(b->path_input);
+    free(b->selected);
     memset(b, 0, sizeof(*b));
-    b->mode = xstrdup(mode && strcmp(mode, "open") == 0 ? "open" : "save");
+    b->mode = strdup(mode && strcmp(mode, "open") == 0 ? "open" : "save");
     const char *start = start_dir && *start_dir ? start_dir : getenv("HOME");
-    b->cwd = xstrdup(start && *start ? start : "/");
-    b->path_input = xstrdup("");
+    b->cwd = strdup(start && *start ? start : "/");
+    b->path_input = strdup("");
     return browser_refresh(b);
 }
 
@@ -51,24 +59,25 @@ char *browser_refresh(FileBrowser *b) {
     size_t n = 0, cap = 0;
 
     entries = realloc(entries, (n + 1) * sizeof(BrowserEntry));
-    entries[n].name = xstrdup("..");
+    entries[n].name = strdup("..");
     entries[n].is_dir = true;
     n++;
 
     struct dirent *de;
     while ((de = readdir(d)) != NULL) {
-        if (strcmp(de->d_name, ".") == 0 || de->d_name[0] == '\0')
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0 ||
+            de->d_name[0] == '\0')
             continue;
         char *full = malloc(strlen(b->cwd) + strlen(de->d_name) + 2);
         sprintf(full, "%s/%s", b->cwd, de->d_name);
         if (is_dir(full)) {
             if (cap <= n) { cap += 8; entries = realloc(entries, cap * sizeof(BrowserEntry)); }
-            entries[n].name = xstrdup(de->d_name);
+            entries[n].name = strdup(de->d_name);
             entries[n].is_dir = true;
             n++;
         } else if (is_file(full) && (b->show_all || has_app_ext(de->d_name))) {
             if (cap <= n) { cap += 8; entries = realloc(entries, cap * sizeof(BrowserEntry)); }
-            entries[n].name = xstrdup(de->d_name);
+            entries[n].name = strdup(de->d_name);
             entries[n].is_dir = false;
             n++;
         }
@@ -93,14 +102,26 @@ static char *join_abs(const char *dir, const char *name) {
 }
 
 char *browser_activate(FileBrowser *b, const char *name) {
+    if (strcmp(name, "..") == 0) {
+        /* join_abs("..") would build a literal ".../sub/.." cwd; go to the
+         * real parent instead. */
+        char *err = browser_parent(b);
+        if (err)
+            return err;
+        free(b->path_input);
+        b->path_input = strdup("");
+        free(b->selected);
+        b->selected = strdup("");
+        return NULL;
+    }
     char *full = join_abs(b->cwd, name);
     if (is_dir(full)) {
         free(b->cwd);
         b->cwd = full;
         free(b->path_input);
-        b->path_input = xstrdup("");
+        b->path_input = strdup("");
         free(b->selected);
-        b->selected = xstrdup("");
+        b->selected = strdup("");
         return browser_refresh(b);
     }
     if (strcmp(b->mode, "open") == 0 && !is_file(full)) {
@@ -135,7 +156,7 @@ char *browser_result(FileBrowser *b) {
         char *full = join_abs(b->cwd, path);
         return full;
     }
-    return xstrdup(path);
+    return strdup(path);
 }
 
 void browser_show_all(FileBrowser *b) { b->show_all = true; }
