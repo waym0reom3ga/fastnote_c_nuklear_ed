@@ -1,0 +1,11 @@
+test: binary_size
+  libs: libglfw.so.3,libGL.so.1,libGLX.so.0,libGLdispatch.so.0,libX11.so.6,libxcb.so.1
+  notes: Lightweight. Nuklear is vendored (~350 KB header). Links to GLFW+OpenGL only.
+
+test: peak_ram_profile
+  capable: yes
+  notes: Requires display. Nuklear immediate-mode GUI via GLFW.
+
+test: gui_tools
+  capable: yes
+  notes: Nuklear vendored. nk_input_button for test clicks.
